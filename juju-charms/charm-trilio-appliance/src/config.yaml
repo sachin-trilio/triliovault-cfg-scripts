@@ -1,0 +1,38 @@
+---
+options:
+  triliovault-ip:
+    type: string
+    default: 192.168.25.37
+    description: TrilioVault IP Address
+  tvault-image-path:
+    type: string
+    default: /mnt/tvault-appliance-os-3.1.62.qcow2.tar.gz 
+    description: TrilioVault Image path & filename
+  tvault-hostname:
+    type: string
+    default: TrilioVM
+    description: TrilioVault Hostname
+  tvault-dns:
+    type: string
+    default: 192.168.1.1
+    description: TrilioVault DNS
+  tvault-netmask:
+    type: string
+    default: 255.255.0.0
+    description: TrilioVault Netmask
+  tvault-gateway:
+    type: string
+    default: 192.168.1.1
+    description: TrilioVault Gateway
+  tvault-memory:
+    type: int
+    default: 6000
+    description: TrilioVault VM memory
+  tvault-cpu:
+    type: int
+    default: 4
+    description: TrilioVault VM CPUs
+  tvault-bridge:
+    type: string
+    default: virbr0
+    description: Network bridge for TrilioVault
