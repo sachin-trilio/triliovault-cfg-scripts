@@ -80,6 +80,13 @@ def validate_ip(ip):
     return False
 
 
+def createbridge(vmconfig):
+    _run_virsh_command(
+        ['bash', '-c',
+         'source ./files/trilio/tvm_install.sh && create_bridge'], vmconfig)
+    log("{} is successfully created.".format(vmconfig['TVM_BRIDGE']))
+
+
 def createvm(vmconfig):
     _run_virsh_command(
         ['bash', '-c',
@@ -119,15 +126,24 @@ def install_appliance():
     charm_vm_config['TVM_CPU'] = config('tvault-cpu')
     charm_vm_config['TVM_BRIDGE'] = config('tvault-bridge')
 
+    # Create n/w bridge
+    is_bridge_created = createbridge(charm_vm_config)
+    if is_bridge_created == 0:
+        log("Could not create {} bridge.".format(
+            charm_vm_config['TVM_BRIDGE']))
+        return False
+    else:
+        log("Successfully created {} bridge.".format(
+            charm_vm_config['TVM_BRIDGE']))
+
     # Create TrilioVault VM
     is_vm_created = createvm(charm_vm_config)
-    if is_vm_created == 0:
+    if is_vm_created == 1:
         log("Could not create {} vm.".format(charm_vm_config['TVM_HOSTNAME']))
         return False
     else:
         log("Successfully created {} vm.".format(
             charm_vm_config['TVM_HOSTNAME']))
-        return True
 
     # Start the appliance
     status_set('maintenance', 'Starting...')
@@ -139,7 +155,9 @@ def install_appliance():
     else:
         log("Successfully started {} vm.".format(
             charm_vm_config['TVM_HOSTNAME']))
-        return True
+
+    # Return True if all conditions passed
+    return True
 
 
 @when_not('trilio-appliance.installed')
@@ -202,6 +220,9 @@ def stop_handler():
 def stop_trilio_appliance():
 
     status_set('maintenance', 'Stopping...')
+
+    # Set hostname
+    charm_vm_config['TVM_HOSTNAME'] = config('tvault-hostname')
 
     # Call the script to stop and uninstll TrilioVault Appliance
     uninst_ret = stopvm(charm_vm_config)

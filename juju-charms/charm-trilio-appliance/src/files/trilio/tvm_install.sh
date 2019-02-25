@@ -46,6 +46,66 @@ cleanUp()
 	sync && echo 3 > /proc/sys/vm/drop_caches
 }
 
+setFileData()
+{
+        cat > /tmp/tmp_interfacs << _EOF_
+auto lo
+iface lo inet loopback
+
+auto ${iface}
+iface ${iface} inet manual
+
+auto ${TVM_BRIDGE}
+iface ${TVM_BRIDGE} inet static
+    bridge_stp off
+    bridge_waitport 0
+    bridge_fd 0
+    bridge_ports ${iface}
+    address ${ip}
+    netmask ${TVM_NETMASK}
+    gateway ${TVM_GATEWAY}
+_EOF_
+}
+
+create_bridge()
+{
+    DEFAULT_ETH=$(ip route | grep default | awk '{ print $5 }') 
+    if [ ${DEFAULT_ETH} == ${TVM_BRIDGE} ]; then
+        logger "bridge is already created"
+        return 0
+    fi
+
+    cat /etc/network/interfaces | grep address
+    if [ $? -eq 1 ]; then
+        ifile=/etc/network/interfaces.d/*.cfg
+    else
+        ifile=/etc/network/interfaces
+    fi
+
+    ip=`cat ${ifile} | grep address | awk '{print $2}'`
+    iface=`cat ${ifile} | grep static | awk '{print $2}'`
+
+    setFileData
+
+    cp /tmp/tmp_interfacs /etc/network/interfaces
+
+    # Check if bridge is created
+    DEFAULT_ETH=$(ip route  | grep default | awk '{ print $5 }') 
+    if [ ${DEFAULT_ETH} == ${TVM_BRIDGE} ]; then
+        logger "Bridge is created"
+        return 0
+    else
+        logger "Failed to create bridge"
+        
+        # Reboot if bridge is not added
+        # ifdown -a ; ifup -a
+        reboot
+
+        return 1
+    fi
+
+}
+
 extractAndCopy()
 {
 	cp ${TVM_IMAGE_PATH} ${imageTargetLoc}
@@ -174,4 +234,4 @@ stop_vm()
 }
 
 
-export -f logger create_vm stop_vm start_vm is_vm_created is_vm_running 
+export -f logger create_bridge create_vm stop_vm start_vm is_vm_created is_vm_running 

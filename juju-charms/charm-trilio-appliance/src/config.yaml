@@ -2,7 +2,7 @@
 options:
   triliovault-ip:
     type: string
-    default: 192.168.25.37
+    default: 172.172.1.41
     description: TrilioVault IP Address
   tvault-image-path:
     type: string
@@ -14,15 +14,15 @@ options:
     description: TrilioVault Hostname
   tvault-dns:
     type: string
-    default: 192.168.1.1
+    default: 172.172.1.2
     description: TrilioVault DNS
   tvault-netmask:
     type: string
-    default: 255.255.0.0
+    default: 255.255.255.0
     description: TrilioVault Netmask
   tvault-gateway:
     type: string
-    default: 192.168.1.1
+    default: 172.172.1.1
     description: TrilioVault Gateway
   tvault-memory:
     type: int
@@ -34,5 +34,5 @@ options:
     description: TrilioVault VM CPUs
   tvault-bridge:
     type: string
-    default: virbr0
+    default: br0
     description: Network bridge for TrilioVault
