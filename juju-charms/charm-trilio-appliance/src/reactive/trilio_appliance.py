@@ -84,29 +84,36 @@ def createbridge(vmconfig):
     _run_virsh_command(
         ['bash', '-c',
          'source ./files/trilio/tvm_install.sh && create_bridge'], vmconfig)
-    log("{} is successfully created.".format(vmconfig['TVM_BRIDGE']))
+    log("Bridge is successfully created.")
 
 
 def createvm(vmconfig):
     _run_virsh_command(
         ['bash', '-c',
          'source ./files/trilio/tvm_install.sh && create_vm'], vmconfig)
-    log("{} is successfully created.".format(vmconfig['TVM_HOSTNAME']))
+    log("TrilioVM is successfully created.")
 
 
 def startvm(vmconfig):
     _run_virsh_command(
         ['bash', '-c',
          'source ./files/trilio/tvm_install.sh && start_vm'], vmconfig)
-    log("{} is successfully started.".format(vmconfig['TVM_HOSTNAME']))
+    log("TrilioVM is successfully started.")
 
 
 def stopvm(vmconfig):
     _run_virsh_command(
         ['bash', '-c',
          'source ./files/trilio/tvm_install.sh && stop_vm'], vmconfig, True)
-    log("{} is successfully shutdown.".format(vmconfig['TVM_HOSTNAME']))
+    log("TrilioVM is successfully shutdown.")
     return True
+
+
+def get_vm_ip(vmconfig):
+    _run_virsh_command(
+        ['bash', '-c',
+         'source ./files/trilio/tvm_install.sh && '
+         'get_vm_ip_address'], vmconfig)
 
 
 def install_appliance():
@@ -115,26 +122,25 @@ def install_appliance():
     # Read image path from resources attached to the charm
     charm_vm_config['TVM_IMAGE_PATH'] = resource_get('trilioimage')
     # Add the IP address in vmconfig dict
-    charm_vm_config['TVM_IP'] = config('triliovault-ip')
+    charm_vm_config['TVM_VIP'] = config('tvault-vip')
     # Read config parameters and add to vmconfig dict
     # charm_vm_config['TVM_IMAGE_PATH'] = config('tvault-image-path')
     charm_vm_config['TVM_HOSTNAME'] = config('tvault-hostname')
-    charm_vm_config['TVM_DNS'] = config('tvault-dns')
-    charm_vm_config['TVM_NETMASK'] = config('tvault-netmask')
-    charm_vm_config['TVM_GATEWAY'] = config('tvault-gateway')
+    charm_vm_config['TVM_NUM_NODES'] = config('tvault-num-nodes')
+    # charm_vm_config['TVM_DNS'] = config('tvault-dns')
+    # charm_vm_config['TVM_NETMASK'] = config('tvault-netmask')
+    # charm_vm_config['TVM_GATEWAY'] = config('tvault-gateway')
     charm_vm_config['TVM_MEM'] = config('tvault-memory')
     charm_vm_config['TVM_CPU'] = config('tvault-cpu')
-    charm_vm_config['TVM_BRIDGE'] = config('tvault-bridge')
+    # charm_vm_config['TVM_BRIDGE'] = config('tvault-bridge')
 
     # Create n/w bridge
     is_bridge_created = createbridge(charm_vm_config)
     if is_bridge_created == 0:
-        log("Could not create {} bridge.".format(
-            charm_vm_config['TVM_BRIDGE']))
+        log("Could not create bridge.")
         return False
     else:
-        log("Successfully created {} bridge.".format(
-            charm_vm_config['TVM_BRIDGE']))
+        log("Successfully created bridge.")
 
     # Create TrilioVault VM
     is_vm_created = createvm(charm_vm_config)
@@ -155,6 +161,7 @@ def install_appliance():
     else:
         log("Successfully started {} vm.".format(
             charm_vm_config['TVM_HOSTNAME']))
+        get_vm_ip(charm_vm_config)
 
     # Return True if all conditions passed
     return True
@@ -166,7 +173,7 @@ def install_trilio_appliance():
     status_set('maintenance', 'Installing...')
 
     # Validate TrilioVault IP
-    if not validate_ip(config('triliovault-ip')):
+    if not validate_ip(config('tvault-vip')):
         # IP address is invalid
         # Set status as blocked and return
         status_set(

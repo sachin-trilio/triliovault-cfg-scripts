@@ -1,9 +1,9 @@
 ---
 options:
-  triliovault-ip:
+  tvault-vip:
     type: string
     default: 172.172.1.41
-    description: TrilioVault IP Address
+    description: TrilioVault virtual IP Address
   tvault-image-path:
     type: string
     default: /mnt/tvault-appliance-os-3.1.62.qcow2.tar.gz 
@@ -12,6 +12,10 @@ options:
     type: string
     default: TrilioVM
     description: TrilioVault Hostname
+  tvault-num-nodes:
+    type: int
+    default: 1
+    description: TrilioVault number of nodes - accepted values 1 or 3
   tvault-dns:
     type: string
     default: 172.172.1.2

@@ -11,20 +11,6 @@ logger()
     fi
 }
 
-
-check_env()
-{
-    logger "TVM_IP: ${TVM_IP}"
-    logger "TVM_IMAGE_PATH: ${TVM_IMAGE_PATH}"
-    logger "TVM_HOSTNAME: ${TVM_HOSTNAME}"
-    logger "TVM_DNS: ${TVM_DNS}"
-    logger "TVM_NETMASK: ${TVM_NETMASK}"
-    logger "TVM_GATEWAY: ${TVM_GATEWAY}"
-    logger "TVM_MEM: ${TVM_MEM}"
-    logger "TVM_CPU: ${TVM_CPU}"
-    logger "TVM_BRIDGE: ${TVM_BRIDGE}"
-}
-
 setvars()
 {
 	BASE_DIR="/var/lib/libvirt/images/${imageFile}"
@@ -34,7 +20,7 @@ setvars()
 	TVAULT_ISO="${BASE_DIR}/tvault"
 	MEM=${TVM_MEM}
 	CPUs=${TVM_CPU}
-	BRIDGE=${TVM_BRIDGE}
+	BRIDGE=$(ip route | grep default | awk '{ print $5 }')
 	imageTargetLoc="${BASE_DIR}"
 	mkdir -p ${imageTargetLoc}
 }
@@ -55,22 +41,21 @@ iface lo inet loopback
 auto ${iface}
 iface ${iface} inet manual
 
-auto ${TVM_BRIDGE}
-iface ${TVM_BRIDGE} inet static
+auto br-${iface}
+iface br-${iface} inet static
     bridge_stp off
     bridge_waitport 0
     bridge_fd 0
     bridge_ports ${iface}
     address ${ip}
-    netmask ${TVM_NETMASK}
-    gateway ${TVM_GATEWAY}
+    gateway ${gateway}
 _EOF_
 }
 
 create_bridge()
 {
-    DEFAULT_ETH=$(ip route | grep default | awk '{ print $5 }') 
-    if [ ${DEFAULT_ETH} == ${TVM_BRIDGE} ]; then
+    DEFAULT_ETH=$(ip route | grep default | awk '{print $5}') 
+    if [[ ${DEFAULT_ETH} == "br-"* ]]; then
         logger "bridge is already created"
         return 0
     fi
@@ -84,14 +69,15 @@ create_bridge()
 
     ip=`cat ${ifile} | grep address | awk '{print $2}'`
     iface=`cat ${ifile} | grep static | awk '{print $2}'`
+    gateway=`cat ${ifile} | grep gateway | awk '{print $2}'`
 
     setFileData
 
     cp /tmp/tmp_interfacs /etc/network/interfaces
 
     # Check if bridge is created
-    DEFAULT_ETH=$(ip route  | grep default | awk '{ print $5 }') 
-    if [ ${DEFAULT_ETH} == ${TVM_BRIDGE} ]; then
+    DEFAULT_ETH=$(ip route | grep default | awk '{print $5}') 
+    if [[ ${DEFAULT_ETH} == "br-"* ]]; then
         logger "Bridge is created"
         return 0
     else
@@ -127,111 +113,154 @@ setMetaData()
 instance-id: ${TVM_HOSTNAME}
 network-interfaces: |
   auto ens3
-  iface ens3 inet static
-  address ${TVM_IP}
-  netmask ${TVM_NETMASK}
-  gateway ${TVM_GATEWAY}
-  dns-nameservers ${TVM_DNS}
+  iface ens3 inet dhcp
 hostname: ${TVM_HOSTNAME}
 _EOF_
 }
 
-# Returns 0 if VM is not running
+# setMetaData()
+# {
+# 	cat > ${META_DATA} << _EOF_
+# instance-id: ${TVM_HOSTNAME}
+# network-interfaces: |
+#   auto ens3
+#   iface ens3 inet static
+#   address ${TVM_IP}
+#   netmask ${TVM_NETMASK}
+#   gateway ${TVM_GATEWAY}
+#   dns-nameservers ${TVM_DNS}
+# hostname: ${TVM_HOSTNAME}
+# _EOF_
+# }
+
+# Returns 1 if VM is not running
 is_vm_running()
 {
-    local run=$(sudo virsh list --all | grep ${TVM_HOSTNAME} | awk '{print $NF}')
-    if [ "$run" == "running" ]; then
-        return 1
-    else
-        return 0
-    fi
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        local run=$(sudo virsh list --all | grep ${TVM_HOSTNAME}-$i | awk '{print $NF}')
+        if [ "$run" != "running" ]; then
+            return 1
+        fi
+    done
+    # Return 0 if all Tfilio VMs are running
+    return 0
 }
 
-# Returns 0 if VM is not created
+# Returns 1 if VM is not created
 is_vm_created()
 {
-    if [ `/usr/bin/virsh list --all | grep -c ${TVM_HOSTNAME}` -eq 1 ]; then
-        return 1
-    else
-        return 0
-    fi
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        if [ `/usr/bin/virsh list --all | grep -c ${TVM_HOSTNAME}-$i` -ne 1 ]; then
+            return 1
+        fi
+    done
+    # Return 0 if all Tfilio VMs are created
+    return 0
 }
 
 create_vm()
 {
-    logger "Check if ${TVM_HOSTNAME} vm already exists"
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        logger "Check if ${TVM_HOSTNAME}-$i vm already exists"
 
-    if [ `/usr/bin/virsh list --all | grep -c ${TVM_HOSTNAME}` -eq 1 ]; then
-        logger "vm is already created"
-        return
-    fi
+        if [ `/usr/bin/virsh list --all | grep -c ${TVM_HOSTNAME}-$i` -eq 1 ]; then
+            logger "vm is already created"
+            return
+        fi
 
-    # Image file path, Host Name, IP Address
-    imageFile=`ls ${TVM_IMAGE_PATH} | awk -F'/' '{print $NF}' | cut -d"." -f1-4`
-    # Set env variables
-    setvars
-    # Set User data and meta data
-    setUserData
-    setMetaData
-    # Extract and copy
-    logger "Extract and copy the image"
-    extractAndCopy
-    # create ISO
-    logger "Create ISO image"
-    genisoimage -output ${TVAULT_ISO}.iso -volid cidata -joliet -rock ${USER_DATA} ${META_DATA} > /dev/null 2>&1
-    # Create Trilio VM using iso img
-    logger "Create Trilio VM using iso img"
-    virt-install --import --name ${TVM_HOSTNAME} --memory $MEM --vcpus $CPUs --disk ${imageTargetLoc}/${imageFile},format=qcow2,bus=virtio --disk ${TVAULT_ISO}.iso,device=cdrom --network  bridge=${BRIDGE},model=virtio --os-type=linux --noautoconsole
-    sleep 15
-    virsh change-media ${TVM_HOSTNAME} hda --eject --config
-    # Cleanup
-    cleanUp
+        ORIG_HOSTNAME=${TVM_HOSTNAME}
+        TVM_HOSTNAME=${TVM_HOSTNAME}-$i
+
+        # Image file path, Host Name, IP Address
+        imageFile=`ls ${TVM_IMAGE_PATH} | awk -F'/' '{print $NF}' | cut -d"." -f1-4`
+        imageFile=$imageFile-$i
+
+        # Set env variables
+        setvars
+        # Set User data and meta data
+        setUserData
+        setMetaData
+
+        # Reset the imageFile name
+        imageFile=`ls ${TVM_IMAGE_PATH} | awk -F'/' '{print $NF}' | cut -d"." -f1-4`
+
+        # Extract and copy
+        logger "Extract and copy the image"
+        extractAndCopy
+        # create ISO
+        logger "Create ISO image"
+        genisoimage -output ${TVAULT_ISO}.iso -volid cidata -joliet -rock ${USER_DATA} ${META_DATA} > /dev/null 2>&1
+        # Create Trilio VM using iso img
+        logger "Create Trilio VM using iso img"
+        virt-install --import --name ${TVM_HOSTNAME} --memory $MEM --vcpus $CPUs --disk ${imageTargetLoc}/${imageFile},format=qcow2,bus=virtio --disk ${TVAULT_ISO}.iso,device=cdrom --network  bridge=${BRIDGE},model=virtio --os-type=linux --noautoconsole
+        sleep 15
+        virsh change-media ${TVM_HOSTNAME} hda --eject --config
+        # Cleanup
+        cleanUp
+        TVM_HOSTNAME=${ORIG_HOSTNAME}
+    done
 
     is_vm_created
     if [ $? -eq 0 ]; then
-        logger "Created Trilio vm"
-        exit 1
+        logger "Created Trilio VMs"
+        exit 0
     fi
 }
 
 # Start the VM
 start_vm()
 {
-    logger "Get Trilio vm state"
-    state="`sudo virsh dominfo ${TVM_HOSTNAME} | awk '/State:/' | cut -d: -f 2 | tr -d ' '`"
-    case $state in
-        running)   logger "${TVM_HOSTNAME} is already runnning"
-                   ;;
-        shut*)     logger "need to start ${TVM_HOSTNAME}"
-                   /usr/bin/virsh start ${TVM_HOSTNAME}
-                   if [ $? -eq 1 ]; then
-                       logger "Error: Trilio vm is shutdown but couldn't restart it"
-                       exit 1
-                   fi
-                   ;;
-        *)         logger "Unknown state($state) of ${TVM_HOSTNAME}"
-                   ;;
-    esac
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        logger "Get Trilio vm state"
+        state="`sudo virsh dominfo ${TVM_HOSTNAME}-$i | awk '/State:/' | cut -d: -f 2 | tr -d ' '`"
+        case $state in
+            running)   logger "${TVM_HOSTNAME}-$i is already runnning"
+                       ;;
+            shut*)     logger "need to start ${TVM_HOSTNAME}-$i"
+                       /usr/bin/virsh start ${TVM_HOSTNAME}-$i
+                       if [ $? -eq 1 ]; then
+                           logger "Error: Trilio vm is shutdown but couldn't restart it"
+                           exit 1
+                       fi
+                       ;;
+            *)         logger "Unknown state($state) of ${TVM_HOSTNAME}-$i"
+                       ;;
+        esac
+    done
+
 }
 
 
 # Stop, undefine the VM
 stop_vm()
 {
-    is_vm_running
-    if [ $? -eq 1 ]; then
-        logger "Shutting down Trilio vm"
-        /usr/bin/virsh shutdown ${TVM_HOSTNAME}
-        sleep 5
-    fi
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        local run=$(sudo virsh list --all | grep ${TVM_HOSTNAME}-$i | awk '{print $NF}')
+        if [ "$run" == "running" ]; then
+            logger "Shutting down Trilio vm"
+            /usr/bin/virsh shutdown ${TVM_HOSTNAME}-$i
+            sleep 5
+        fi
 
-    is_vm_running
-    if [ $? -eq 1 ]; then
         logger "Destroying Trilio vm"
-        /usr/bin/virsh destroy ${TVM_HOSTNAME}
-    fi
-    /usr/bin/virsh undefine ${TVM_HOSTNAME}
+        /usr/bin/virsh destroy ${TVM_HOSTNAME}-$i
+        /usr/bin/virsh undefine ${TVM_HOSTNAME}-$i
+    done
 }
 
 
-export -f logger create_bridge create_vm stop_vm start_vm is_vm_created is_vm_running 
+get_vm_ip_address()
+{
+    for i in $(seq 1 $TVM_NUM_NODES);do
+        vm_mac=$(virsh domiflist ${TVM_HOSTNAME}-$i |grep br- |grep -o -E "([0-9a-f]{2}:){5}([0-9a-f]{2})")
+   
+        vm_nw=$(ip route | grep default | awk '{print $3}' | cut -d "." -f1-3)    
+        # Sweep ping
+        for j in {1..254} ;do (ping $vm_nw.$j -c 1 -w 5  >/dev/null && echo "$vm_nw.$j" &) ;done > /dev/null 2>&1
+        vm_ip=$(arp -a | grep $vm_mac | cut -d " " -f2 | sed 's/[(),]//g')
+        echo $vm_ip
+        logger "IP ADDRESS OF ${TVM_HOSTNAME}-$i VM IS ($vm_ip)"
+    done
+}
+
+export -f logger create_bridge create_vm stop_vm start_vm is_vm_created is_vm_running get_vm_ip_address

@@ -1,6 +1,6 @@
 import mock
 import unittest
-import trilio_configurator as configurator
+import trilio_data_mover as datamover
 
 _when_args = {}
 _when_not_args = {}
@@ -36,10 +36,10 @@ class Test(unittest.TestCase):
         # try except is Python2/Python3 compatibility as Python3 has moved
         # reload to importlib.
         try:
-            reload(configurator)
+            reload(datamover)
         except NameError:
             import importlib
-            importlib.reload(configurator)
+            importlib.reload(datamover)
 
     @classmethod
     def tearDownClass(cls):
@@ -51,10 +51,10 @@ class Test(unittest.TestCase):
         cls._patched_when_not = None
         # and fix any breakage we did to the module
         try:
-            reload(configurator)
+            reload(datamover)
         except NameError:
             import importlib
-            importlib.reload(configurator)
+            importlib.reload(datamover)
 
     def setUp(self):
         self._patches = {}
@@ -81,10 +81,14 @@ class Test(unittest.TestCase):
         # are meaningful for this interface: this is to handle regressions.
         # The keys are the function names that the hook attaches to.
         when_patterns = {
-            'install_configurator': ('config.changed', ),
+            'stop_tvault_contego_plugin': ('tvault-contego.stopping', ),
         }
+        when_not_patterns = {
+            'install_tvault_contego_plugin': (
+                'tvault-contego.installed', ), }
         # check the when hooks are attached to the expected functions
-        for t, p in [(_when_args, when_patterns)]:
+        for t, p in [(_when_args, when_patterns),
+                     (_when_not_args, when_not_patterns)]:
             for f, args in t.items():
                 # check that function is in patterns
                 self.assertTrue(f in p.keys(),
@@ -96,23 +100,99 @@ class Test(unittest.TestCase):
                 self.assertEqual(sorted(lists), sorted(p[f]),
                                  "{}: incorrect state registration".format(f))
 
-    def test_install_configurator(self):
-         self.patch(configurator, 'install_configurator')
-         configurator.install_configurator()
-         self.install_configurator.assert_called_once_with()
+    def test_install_plugin(self):
+         self.patch(datamover, 'install_plugin')
+         datamover.install_plugin('1.2.3.4', 'version', 'venv')
+         self.install_plugin.assert_called_once_with('1.2.3.4', 'version', 'venv')
 
-    def test_install_pass(self):
-         self.patch(configurator, 'status_set')
-         self.patch(configurator.ansible, 'apply_playbook')
-         configurator.install_configurator()
-         self.apply_playbook.assert_called_once_with('site.yaml')
-         self.status_set.assert_called_with('active', 'Ready...')
+    def test_uninstall_plugin(self):
+         self.patch(datamover, 'uninstall_plugin')
+         datamover.uninstall_plugin()
+         self.uninstall_plugin.assert_called_once_with()
 
-    def test_install_fail(self):
-         self.patch(configurator, 'status_set')
-         self.patch(configurator, 'log')
-         configurator.install_configurator()
-         self.status_set.assert_has_calls([
-             mock.call('maintenance', 'configuring tvault...'),
-             mock.call('blocked', 'configuration failed')
-             ])
+    def test_install_tvault_contego_plugin(self):
+         self.patch(datamover, 'install_tvault_contego_plugin')
+         datamover.install_tvault_contego_plugin()
+         self.install_tvault_contego_plugin.assert_called_once_with()
+
+    def test_stop_tvault_contego_plugin(self):
+         self.patch(datamover, 'status_set')
+         self.patch(datamover, 'remove_state')
+         self.patch(datamover, 'uninstall_plugin')
+         self.uninstall_plugin.return_value = True
+         datamover.stop_tvault_contego_plugin()
+         self.status_set.assert_called_with(
+             'maintenance', 'Stopping...')
+         self.remove_state.assert_called_with('tvault-contego.stopping')
+
+    def test_invalid_ip(self):
+         self.patch(datamover, 'config')
+         self.patch(datamover, 'status_set')
+         self.patch(datamover, 'validate_ip')
+         self.validate_ip.return_value = False
+         datamover.install_tvault_contego_plugin()
+         self.status_set.assert_called_with(
+             'blocked',
+             'Invalid IP address, please provide correct IP address')
+
+    def test_s3_object_storage_fail(self):
+         self.patch(datamover, 'config')
+         self.config.return_value = 's3'
+         self.patch(datamover, 'status_set')
+         self.patch(datamover, 'validate_ip')
+         self.validate_ip.return_value = True
+         self.patch(datamover, 'validate_backup')
+         self.validate_backup.return_value = True
+         self.patch(datamover, 'add_users')
+         self.add_users.return_value = True
+         self.patch(datamover, 'create_virt_env')
+         self.create_virt_env.return_value = True
+         self.patch(datamover, 'ensure_files')
+         self.ensure_files.return_value = True
+         self.patch(datamover, 'create_conf')
+         self.create_conf.return_value = True
+         self.patch(datamover, 'ensure_data_dir')
+         self.ensure_data_dir.return_value = True
+         self.patch(datamover, 'create_service_file')
+         self.create_service_file.return_value = True
+         self.patch(datamover, 'create_object_storage_service')
+         self.create_object_storage_service.return_value = False
+         datamover.install_tvault_contego_plugin()
+         self.status_set.assert_called_with(
+             'blocked',
+             'Failed while creating ObjectStore service file')
+
+    def test_s3_object_storage_pass(self):
+         self.patch(datamover, 'config')
+         self.config.side_effect = ['1.2.3.4', 's3']
+         self.patch(datamover, 'status_set')
+         self.patch(datamover, 'validate_ip')
+         self.validate_ip.return_value = True
+         self.patch(datamover, 'validate_backup')
+         self.validate_backup.return_value = True
+         self.patch(datamover, 'add_users')
+         self.add_users.return_value = True
+         self.patch(datamover, 'create_virt_env')
+         self.create_virt_env.return_value = True
+         self.patch(datamover, 'ensure_files')
+         self.ensure_files.return_value = True
+         self.patch(datamover, 'create_conf')
+         self.create_conf.return_value = True
+         self.patch(datamover, 'ensure_data_dir')
+         self.ensure_data_dir.return_value = True
+         self.patch(datamover, 'create_service_file')
+         self.create_service_file.return_value = True
+         self.patch(datamover, 'create_object_storage_service')
+         self.create_object_storage_service.return_value = True
+         self.patch(datamover, 'service_restart')
+         self.patch(datamover, 'set_flag')
+         self.patch(datamover, 'application_version_set')
+         self.patch(datamover, 'get_new_version')
+         datamover.install_tvault_contego_plugin()
+         self.service_restart.assert_called_with(
+             'tvault-contego')
+         self.status_set.assert_called_with(
+             'active', 'Ready...')
+         self.application_version_set.assert_called_once()
+         self.set_flag.assert_called_with(
+             'tvault-contego.installed')
