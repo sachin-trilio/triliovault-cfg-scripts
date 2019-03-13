@@ -49,6 +49,7 @@ iface br-${iface} inet static
     bridge_ports ${iface}
     address ${ip}
     gateway ${gateway}
+    dns-nameservers 8.8.8.8
 _EOF_
 }
 
@@ -200,6 +201,8 @@ create_vm()
         TVM_HOSTNAME=${ORIG_HOSTNAME}
     done
 
+    sleep 30
+
     is_vm_created
     if [ $? -eq 0 ]; then
         logger "Created Trilio VMs"
@@ -258,9 +261,18 @@ get_vm_ip_address()
         # Sweep ping
         for j in {1..254} ;do (ping $vm_nw.$j -c 1 -w 5  >/dev/null && echo "$vm_nw.$j" &) ;done > /dev/null 2>&1
         vm_ip=$(arp -a | grep $vm_mac | cut -d " " -f2 | sed 's/[(),]//g')
-        echo $vm_ip
-        logger "IP ADDRESS OF ${TVM_HOSTNAME}-$i VM IS ($vm_ip)"
+        # Exit if IP address is not retrieved
+        if [ x$vm_ip = "x" ]; then
+             exit 1
+        fi
+
+        if [ $i -gt 1 ]; then
+             tvm_host_list="${tvm_host_list},"
+        fi
+        tvm_host_list="${tvm_host_list}${vm_ip}=${TVM_HOSTNAME}-$i"
     done
+    # Return a string of hostnames and IP Addresses    
+    echo $tvm_host_list
 }
 
 export -f logger create_bridge create_vm stop_vm start_vm is_vm_created is_vm_running get_vm_ip_address

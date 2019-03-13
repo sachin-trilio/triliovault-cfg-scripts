@@ -16,3 +16,6 @@ resources:
     type: file
     filename: tvault-appliance-os-3.1.62.qcow2.tar.gz
     description: "TrilioVaul qcow2 image file"
+requires:
+  identity-admin:
+    interface: keystone-admin

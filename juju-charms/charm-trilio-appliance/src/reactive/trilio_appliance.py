@@ -3,6 +3,10 @@ import re
 import netaddr
 import sys
 import subprocess
+from charmhelpers.contrib import ansible
+from keystoneauth1 import identity as keystone_identity
+from keystoneauth1 import session as keystone_session
+from keystoneclient.v3 import client as keystone_client
 
 from distutils.spawn import (
     find_executable
@@ -22,6 +26,9 @@ from charmhelpers.core.hookenv import (
     ERROR,
     application_version_set,
     resource_get,
+    relation_ids,
+    relation_get,
+    related_units,
 )
 from charmhelpers.fetch import (
     apt_install,
@@ -29,6 +36,7 @@ from charmhelpers.fetch import (
 )
 
 charm_vm_config = {}
+config = config()
 
 
 def _run_virsh_command(cmd, vmconfig, ignore=False):
@@ -110,10 +118,11 @@ def stopvm(vmconfig):
 
 
 def get_vm_ip(vmconfig):
-    _run_virsh_command(
+    hosts_ip_list = _run_virsh_command(
         ['bash', '-c',
          'source ./files/trilio/tvm_install.sh && '
          'get_vm_ip_address'], vmconfig)
+    return hosts_ip_list.strip()
 
 
 def install_appliance():
@@ -122,17 +131,12 @@ def install_appliance():
     # Read image path from resources attached to the charm
     charm_vm_config['TVM_IMAGE_PATH'] = resource_get('trilioimage')
     # Add the IP address in vmconfig dict
-    charm_vm_config['TVM_VIP'] = config('tvault-vip')
+    charm_vm_config['TVM_VIP'] = config['tv-virtual-ip']
     # Read config parameters and add to vmconfig dict
-    # charm_vm_config['TVM_IMAGE_PATH'] = config('tvault-image-path')
-    charm_vm_config['TVM_HOSTNAME'] = config('tvault-hostname')
-    charm_vm_config['TVM_NUM_NODES'] = config('tvault-num-nodes')
-    # charm_vm_config['TVM_DNS'] = config('tvault-dns')
-    # charm_vm_config['TVM_NETMASK'] = config('tvault-netmask')
-    # charm_vm_config['TVM_GATEWAY'] = config('tvault-gateway')
-    charm_vm_config['TVM_MEM'] = config('tvault-memory')
-    charm_vm_config['TVM_CPU'] = config('tvault-cpu')
-    # charm_vm_config['TVM_BRIDGE'] = config('tvault-bridge')
+    charm_vm_config['TVM_HOSTNAME'] = config['tvault-hostname']
+    charm_vm_config['TVM_NUM_NODES'] = config['tvault-num-nodes']
+    charm_vm_config['TVM_MEM'] = config['tvault-memory']
+    charm_vm_config['TVM_CPU'] = config['tvault-cpu']
 
     # Create n/w bridge
     is_bridge_created = createbridge(charm_vm_config)
@@ -161,10 +165,88 @@ def install_appliance():
     else:
         log("Successfully started {} vm.".format(
             charm_vm_config['TVM_HOSTNAME']))
-        get_vm_ip(charm_vm_config)
 
+    charm_vm_config['TVM_HOST_LIST'] = get_vm_ip(charm_vm_config)
+    log("HOSTNAMES AND IP ADDRESS LIST --> {}".format(
+        charm_vm_config['TVM_HOST_LIST']))
+
+    # Update config parameter tv-controller-nodes
+    config['tv-controller-nodes'] = charm_vm_config['TVM_HOST_LIST']
+    config['tv-conf-node-ip'] = re.split(
+        '=', str(charm_vm_config['TVM_HOST_LIST']))[0]
+    log("CONFIG HOSTNAMES AND IP ADDRESS LIST --> {}".format(
+        config['tv-controller-nodes']))
+    log("TRILIOVAULT NODE IP ADDRESS --> {}".format(
+        config['tv-conf-node-ip']))
     # Return True if all conditions passed
     return True
+
+
+@hook('identity-admin-relation-joined')
+def get_keystone_admin():
+    try:
+        rid = relation_ids('identity-admin')[0]
+        units = related_units(rid)
+        rdata = relation_get(rid=rid, unit=units[0])
+        auth = keystone_identity.Password(
+            auth_url='{}://{}:{}/'.format(
+                         rdata.get('service_protocol'),
+                         rdata.get('service_hostname'),
+                         rdata.get('service_port')),
+            user_domain_name=rdata.get('service_user_domain_name'),
+            username=rdata.get('service_username'),
+            password=rdata.get('service_password'),
+            project_domain_name=rdata.get('service_project_domain_name'),
+            project_name=rdata.get('service_tenant_name'),
+            )
+        sess = keystone_session.Session(auth=auth)
+
+        keystone = keystone_client.Client(session=sess)
+        dm = keystone.endpoints.list(
+              keystone.services.list(name='dmapi')[0].id)
+        ks = keystone.endpoints.list(
+              keystone.services.list(name='keystone')[0].id)
+        dm_endpoints = {}
+        for i in dm:
+            dm_endpoints[i.interface] = i.url
+
+        keystone_endpoints = {}
+        for i in ks:
+            keystone_endpoints[i.interface] = i.url
+
+        roles_list = keystone.roles.list()
+        roles = [i.name for i in roles_list]
+
+        config['tv-os-username'] = rdata.get('service_username')
+        config['tv-os-password'] = rdata.get('service_password')
+        config['tv-os-domain-id'] = keystone.domains.list(
+                                     name=rdata.get(
+                                      'service_user_domain_name'))[0].id
+        config['tv-os-tenant-name'] = rdata.get('service_tenant_name')
+        config['tv-os-region-name'] = rdata.get('service_region')
+        config['tv-keystone-admin-url'] = keystone_endpoints.get('admin')
+        config['tv-keystone-public-url'] = keystone_endpoints.get('public')
+        config['tv-dm-endpoint'] = dm_endpoints.get('internal')
+        config['tv-os-trustee-role'] = config['tv-os-trustee-role']\
+            if config['tv-os-trustee-role'] else roles[0]
+        config.save()
+        log("get_keystone_admin: Retrieved admin info")
+    except Exception as ex:
+        log("get_keystone_admin: Retrieval of admin info failed")
+        log(ex)
+
+
+def configure_appliance():
+    log("Starting configuration...")
+    status_set('maintenance', 'configuring tvault...')
+    try:
+        get_keystone_admin()
+        ansible.apply_playbook('site.yaml')
+        status_set('active', 'Ready...')
+    except Exception as e:
+        log("ERROR:  {}".format(e))
+        log("Check the ansible log in TrilioVault to find more info")
+        status_set('blocked', 'configuration failed')
 
 
 @when_not('trilio-appliance.installed')
@@ -173,7 +255,7 @@ def install_trilio_appliance():
     status_set('maintenance', 'Installing...')
 
     # Validate TrilioVault IP
-    if not validate_ip(config('tvault-vip')):
+    if not validate_ip(re.split("/", config['tv-virtual-ip'])[0]):
         # IP address is invalid
         # Set status as blocked and return
         status_set(
@@ -205,6 +287,8 @@ def install_trilio_appliance():
     # Call install handler to install the packages
     if install_appliance():
         # Install was successful
+        # Configure the TrilioVault Appliance
+        configure_appliance()
         status_set('active', 'Ready...')
         tv_version = re.search(
             r'\d.\d.\d*', charm_vm_config['TVM_IMAGE_PATH']).group()
@@ -229,7 +313,7 @@ def stop_trilio_appliance():
     status_set('maintenance', 'Stopping...')
 
     # Set hostname
-    charm_vm_config['TVM_HOSTNAME'] = config('tvault-hostname')
+    charm_vm_config['TVM_HOSTNAME'] = config['tvault-hostname']
 
     # Call the script to stop and uninstll TrilioVault Appliance
     uninst_ret = stopvm(charm_vm_config)
