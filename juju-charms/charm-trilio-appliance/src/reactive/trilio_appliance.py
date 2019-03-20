@@ -7,6 +7,7 @@ from charmhelpers.contrib import ansible
 from keystoneauth1 import identity as keystone_identity
 from keystoneauth1 import session as keystone_session
 from keystoneclient.v3 import client as keystone_client
+from urllib.parse import urlparse
 
 from distutils.spawn import (
     find_executable
@@ -166,23 +167,9 @@ def install_appliance():
         log("Successfully started {} vm.".format(
             charm_vm_config['TVM_HOSTNAME']))
 
-    charm_vm_config['TVM_HOST_LIST'] = get_vm_ip(charm_vm_config)
-    log("HOSTNAMES AND IP ADDRESS LIST --> {}".format(
-        charm_vm_config['TVM_HOST_LIST']))
-
-    # Update config parameter tv-controller-nodes
-    config['tv-controller-nodes'] = charm_vm_config['TVM_HOST_LIST']
-    config['tv-conf-node-ip'] = re.split(
-        '=', str(charm_vm_config['TVM_HOST_LIST']))[0]
-    log("CONFIG HOSTNAMES AND IP ADDRESS LIST --> {}".format(
-        config['tv-controller-nodes']))
-    log("TRILIOVAULT NODE IP ADDRESS --> {}".format(
-        config['tv-conf-node-ip']))
-    # Return True if all conditions passed
     return True
 
 
-@hook('identity-admin-relation-joined')
 def get_keystone_admin():
     try:
         rid = relation_ids('identity-admin')[0]
@@ -208,7 +195,9 @@ def get_keystone_admin():
               keystone.services.list(name='keystone')[0].id)
         dm_endpoints = {}
         for i in dm:
-            dm_endpoints[i.interface] = i.url
+            i_url_parsed = urlparse(i.url)
+            dm_endpoints[i.interface] = \
+                i_url_parsed.scheme+'://'+i_url_parsed.netloc
 
         keystone_endpoints = {}
         for i in ks:
@@ -229,20 +218,42 @@ def get_keystone_admin():
         config['tv-dm-endpoint'] = dm_endpoints.get('internal')
         config['tv-os-trustee-role'] = config['tv-os-trustee-role']\
             if config['tv-os-trustee-role'] else roles[0]
+
+        # Read config parameters and add to vmconfig dict
+        charm_vm_config['TVM_HOSTNAME'] = config['tvault-hostname']
+        charm_vm_config['TVM_NUM_NODES'] = config['tvault-num-nodes']
+        # charm_vm_config['TVM_HOST_LIST'] = get_vm_ip(
+        #     charm_vm_config).decode("utf-8")
+        # log("HOSTNAMES AND IP ADDRESS LIST --> {}".format(
+        #     charm_vm_config['TVM_HOST_LIST']))
+
+        # Update config parameter tv-controller-nodes
+        config['tv-controller-nodes'] = get_vm_ip(
+            charm_vm_config).decode("utf-8")
+        config['tv-conf-node-ip'] = config['tv-controller-nodes'].split('=')[0]
+        log("CONFIG HOSTNAMES AND IP ADDRESS LIST --> {}".format(
+            config['tv-controller-nodes']))
+        log("TRILIOVAULT NODE IP ADDRESS --> {}".format(
+            config['tv-conf-node-ip']))
         config.save()
         log("get_keystone_admin: Retrieved admin info")
+        set_flag('get-keystone-admin.available')
     except Exception as ex:
         log("get_keystone_admin: Retrieval of admin info failed")
         log(ex)
 
 
+@when_not('trilio-appliance.configured')
+@when('trilio-appliance.installed')
 def configure_appliance():
     log("Starting configuration...")
     status_set('maintenance', 'configuring tvault...')
     try:
         get_keystone_admin()
+        log("configure_appliance: {}".format(config))
         ansible.apply_playbook('site.yaml')
-        status_set('active', 'Ready...')
+        status_set('active', 'Configured ! Ready...')
+        set_flag('trilio-appliance.configured')
     except Exception as e:
         log("ERROR:  {}".format(e))
         log("Check the ansible log in TrilioVault to find more info")
@@ -287,9 +298,7 @@ def install_trilio_appliance():
     # Call install handler to install the packages
     if install_appliance():
         # Install was successful
-        # Configure the TrilioVault Appliance
-        configure_appliance()
-        status_set('active', 'Ready...')
+        status_set('active', 'Installed ! Ready...')
         tv_version = re.search(
             r'\d.\d.\d*', charm_vm_config['TVM_IMAGE_PATH']).group()
         application_version_set(tv_version)
