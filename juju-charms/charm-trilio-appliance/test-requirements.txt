@@ -1,7 +1,9 @@
 # Unit test requirements
 flake8>=2.2.4,<=2.4.1
-os-testr>=0.4.1
+stestr>=2.2.0
 charms.reactive
 mock>=1.2
 coverage>=3.6
 git+https://github.com/openstack/charms.openstack#egg=charms.openstack
+python-keystoneclient
+keystoneauth1

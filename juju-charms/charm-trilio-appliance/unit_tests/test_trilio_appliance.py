@@ -1,10 +1,12 @@
 import mock
 import unittest
-import trilio_data_mover as datamover
+import importlib
+mock_config = mock.patch('charmhelpers.core.hookenv.config')
+mock_config.start()
+import trilio_appliance as appliance
 
 _when_args = {}
 _when_not_args = {}
-
 
 def mock_hook_factory(d):
 
@@ -36,10 +38,10 @@ class Test(unittest.TestCase):
         # try except is Python2/Python3 compatibility as Python3 has moved
         # reload to importlib.
         try:
-            reload(datamover)
+            reload(appliance)
         except NameError:
             import importlib
-            importlib.reload(datamover)
+            importlib.reload(appliance)
 
     @classmethod
     def tearDownClass(cls):
@@ -51,10 +53,10 @@ class Test(unittest.TestCase):
         cls._patched_when_not = None
         # and fix any breakage we did to the module
         try:
-            reload(datamover)
+            reload(appliance)
         except NameError:
             import importlib
-            importlib.reload(datamover)
+            importlib.reload(appliance)
 
     def setUp(self):
         self._patches = {}
@@ -81,11 +83,13 @@ class Test(unittest.TestCase):
         # are meaningful for this interface: this is to handle regressions.
         # The keys are the function names that the hook attaches to.
         when_patterns = {
-            'stop_tvault_contego_plugin': ('tvault-contego.stopping', ),
+            'stop_trilio_appliance': ('trilio-appliance.stopping', ),
+            'configure_appliance': ('trilio-appliance.installed', ),
         }
         when_not_patterns = {
-            'install_tvault_contego_plugin': (
-                'tvault-contego.installed', ), }
+            'configure_appliance': ('trilio-appliance.configured', ),
+            'install_trilio_appliance': (
+                'trilio-appliance.installed', ), }
         # check the when hooks are attached to the expected functions
         for t, p in [(_when_args, when_patterns),
                      (_when_not_args, when_not_patterns)]:
@@ -100,10 +104,11 @@ class Test(unittest.TestCase):
                 self.assertEqual(sorted(lists), sorted(p[f]),
                                  "{}: incorrect state registration".format(f))
 
-    def test_install_plugin(self):
-         self.patch(datamover, 'install_plugin')
-         datamover.install_plugin('1.2.3.4', 'version', 'venv')
-         self.install_plugin.assert_called_once_with('1.2.3.4', 'version', 'venv')
+"""
+    def test_install_appliance(self):
+         self.patch(appliance, 'install_appliance')
+         appliance.install_appliance()
+         self.install_appliance.assert_called_once_with()
 
     def test_uninstall_plugin(self):
          self.patch(datamover, 'uninstall_plugin')
@@ -196,3 +201,4 @@ class Test(unittest.TestCase):
          self.application_version_set.assert_called_once()
          self.set_flag.assert_called_with(
              'tvault-contego.installed')
+"""
